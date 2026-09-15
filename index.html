@@ -26922,6 +26922,389 @@ body.a9867-current-hunt #battle>.mobile-start{display:none!important}
 })();
 
 
+// =====================================================================
+// B1.0 Alpha98.68 — 共同版自動設定恢復 / 自動喝水、道具、魔法整合
+// - 共用一套面板；依角色已學技能與職業條件自動過濾選項。
+// - 復用 Alpha97 既有治癒藥水/補貨/Buff道具/自動攻擊底層。
+// - 新增：開怪技能、技能Buff自動維持、轉換魔法條件。
+// =====================================================================
+(()=>{
+  const A9868_BUILD='B1.0 Alpha98.68';
+  let A9868_TAB='auto';
+  const A9868_OPENED=new WeakSet();
+  const st68=document.createElement('style');st68.id='a9868-style';st68.textContent=`
+.a9868-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:4px 0 10px}.a9868-tabs button{min-height:40px;border:1px solid #5d4723;border-radius:7px;background:#1a120b;color:#c9b68b;font-size:13px;cursor:pointer}.a9868-tabs button.active{border-color:#cf9f29;background:#56390d;color:#ffe67c;font-weight:800}.a9868-body{min-width:0}.a9868-auto{display:grid;gap:10px}.a9868-card{border:1px solid #5a4320;border-radius:10px;background:#171008;padding:12px}.a9868-card h4{margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid #3b2a16;color:#b8a47c;font-size:13px;font-weight:500}.a9868-row.top{display:grid;grid-template-columns:minmax(120px,1fr) auto 62px auto;gap:8px;align-items:center}.a9868-row select,.a9868-skillline select{height:36px;border:1px solid #624a21;border-radius:6px;background:#100b07;color:#eee0bd;padding:0 9px;font-size:13px;min-width:0}.a9868-check{display:flex;align-items:center;gap:8px;margin-top:10px;color:#d8c69f;font-size:13px}.a9868-check.compact{margin:4px 0 9px;padding-left:2px}.a9868-check input,.a9868-item-row input,.a9868-buff-row input{width:18px;height:18px;accent-color:#b37f16}.a9868-skillline{display:grid;grid-template-columns:86px auto 58px auto minmax(145px,1fr);gap:7px;align-items:center;margin:8px 0;color:#d8c69f;font-size:13px}.a9868-skillline.convert{grid-template-columns:86px auto 58px auto 58px auto minmax(145px,1fr)}.a9868-skillline b{font-size:13px}.a9868-skillline.opener b{color:#e4a91b}.a9868-skillline.attack b{color:#22bce1}.a9868-skillline.heal b{color:#35dd6c}.a9868-skillline.convert b{color:#c889e8}.a9868-skillline select.wide{width:100%}.a9868-note,.a9868-footnote{margin:9px 0 0;color:#a99877;font-size:11px;line-height:1.55}.a9868-buffs{display:grid;gap:3px}.a9868-buff-row{display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:7px;padding:7px 0;color:#d9c7a0;border-bottom:1px solid rgba(94,67,31,.35)}.a9868-buff-row:last-child{border-bottom:0}.a9868-buff-row small{color:#988869}.a9868-items{display:grid;gap:2px}.a9868-item-row{display:grid;grid-template-columns:minmax(150px,1fr) 110px 74px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid rgba(94,67,31,.32);font-size:12px;color:#d6c39c}.a9868-item-row:last-child{border-bottom:0}.a9868-item-row label{display:flex;align-items:center;gap:7px}.a9868-item-row .a9868-buy{justify-self:start;color:#c7aa69}.a9868-item-row small{text-align:right;color:#8f8064}.a9868-empty{padding:8px 0;color:#8f8064;font-size:12px}
+@media(max-width:900px){.a9868-tabs{grid-template-columns:1fr 1fr 1fr}.a9868-tabs button{font-size:11px;min-height:38px}.a9868-card{padding:10px}.a9868-row.top{grid-template-columns:1fr auto 58px auto}.a9868-skillline,.a9868-skillline.convert{grid-template-columns:82px auto 56px auto}.a9868-skillline .wide{grid-column:1/-1}.a9868-skillline.convert select.wide{grid-column:1/-1}.a9868-item-row{grid-template-columns:1fr auto}.a9868-item-row small{grid-column:1/-1;text-align:left;padding-left:26px}}
+`;document.head.appendChild(st68);
+
+  function ensure68(){
+    if(!state)return;
+    if(typeof a97EnsureState==='function')a97EnsureState();else a11EnsureState();
+    const a=state.autoCombat||(state.autoCombat={});
+    if(typeof a.openSkill!=='string')a.openSkill='';
+    if(typeof a.openMpMin!=='number')a.openMpMin=50;
+    if(typeof a.attackMpMin!=='number')a.attackMpMin=Number(a.mpReserve??50);
+    if(typeof a.convertSkill!=='string')a.convertSkill='';
+    if(typeof a.convertHpMin!=='number')a.convertHpMin=50;
+    if(typeof a.convertMpMax!=='number')a.convertMpMax=30;
+    if(!a.autoBuffSkills||typeof a.autoBuffSkills!=='object'||Array.isArray(a.autoBuffSkills))a.autoBuffSkills={};
+    a.openMpMin=Math.max(0,Math.min(100,Number(a.openMpMin)||0));
+    a.attackMpMin=Math.max(0,Math.min(100,Number(a.attackMpMin)||0));
+    a.convertHpMin=Math.max(0,Math.min(100,Number(a.convertHpMin)||0));
+    a.convertMpMax=Math.max(0,Math.min(100,Number(a.convertMpMax)||0));
+    // 相容舊版 mpReserve：新版 UI 的「MP >」直接同步到舊攻擊技能門檻。
+    a.mpReserve=a.attackMpMin;
+  }
+  function ownedRows(type){
+    ensure68();
+    const ids=[...new Set([...(state?.learnedSkills||[])])];
+    return ids.map(id=>[id,DATA.skills?.[id]]).filter(([id,sk])=>{
+      if(!sk||sk.autoDisabled===true)return false;
+      if(type&&sk.type!==type)return false;
+      if(!a11ElementOk(sk))return false;
+      const req=a8ReqSkillLevel(sk);if(req!=null&&Number(state.player.lv||0)<req)return false;
+      return true;
+    });
+  }
+  function skillOptions(type,value,autoLabel='無'){
+    return '<option value="">'+autoLabel+'</option>'+ownedRows(type).map(([id,sk])=>'<option value="'+escapeHtml(id)+'" '+(value===id?'selected':'')+'>'+escapeHtml(sk.n||id)+' · MP '+Number(sk.mp||0)+'</option>').join('');
+  }
+  function pctOptions(value,vals=[10,20,30,40,50,60,70,80,90]){return vals.map(v=>'<option value="'+v+'" '+(Number(value)===v?'selected':'')+'>'+v+'</option>').join('')}
+  function healOptions(){
+    const a=state.autoCombat,rows=typeof a97HealSkillRows==='function'?a97HealSkillRows():ownedRows('heal');
+    return '<option value="auto" '+(a.healSkillId==='auto'?'selected':'')+'>自動選擇</option>'+rows.map(([id,sk])=>'<option value="'+escapeHtml(id)+'" '+(a.healSkillId===id?'selected':'')+'>'+escapeHtml(sk.n||id)+' · MP '+Number(sk.mp||0)+'</option>').join('');
+  }
+  function potionOptions(){const a=state.autoCombat;return [['potion_heal','紅色藥水'],['potion_strong','橙色藥水'],['potion_ult','白色藥水']].map(([id,n])=>'<option value="'+id+'" '+(a.healPotion===id?'selected':'')+'>'+n+'</option>').join('')}
+  function itemRow(id,label,flag,req='all'){
+    const a=state.autoCombat,d=a8Item(id),allowed=req==='all'||req===state.player.cls;if(!allowed)return'';
+    const restock=!!a.autoRestock?.[id];
+    return '<div class="a9868-item-row"><label><input type="checkbox" data-a9868-flag="'+flag+'" '+(a[flag]?'checked':'')+'> <span>'+escapeHtml(label)+'</span></label><label class="a9868-buy"><input type="checkbox" data-a9868-restock="'+id+'" '+(restock?'checked':'')+'> 自動購買</label><small>持有 '+fmt(a8Count(id))+'</small></div>';
+  }
+  function buffRows(){
+    const a=state.autoCombat,rows=ownedRows('buff');
+    if(!rows.length)return '<div class="a9868-empty">目前沒有可自動維持的已學增益技能。</div>';
+    return rows.map(([id,sk])=>'<label class="a9868-buff-row"><input type="checkbox" data-a9868-buff="'+escapeHtml(id)+'" '+(a.autoBuffSkills[id]?'checked':'')+'><span>'+escapeHtml(sk.n||id)+'</span><small>MP '+Number(sk.mp||0)+' · '+Math.max(1,Number(sk.dur||0))+'秒</small></label>').join('');
+  }
+  function autoHtml(){
+    ensure68();const a=state.autoCombat;
+    const selectedPotion=a.healPotion||'potion_heal';
+    return '<div class="a9868-auto">'+
+      '<div class="a9868-card"><div class="a9868-row top"><label class="a9868-select"><select data-a9868-string="healPotion">'+potionOptions()+'</select></label><span>HP &lt;</span><select data-a9868-num="healPct">'+pctOptions(a.healPct)+'</select><span>%</span></div>'+ 
+      '<label class="a9868-check"><input type="checkbox" data-a9868-flag="heal" '+(a.heal?'checked':'')+'> 自動喝治癒藥水</label>'+ 
+      '<label class="a9868-check"><input type="checkbox" data-a9868-restock="'+selectedPotion+'" '+(a.autoRestock?.[selectedPotion]?'checked':'')+'> 背包藥水用完前自動購買</label></div>'+ 
+      '<div class="a9868-card"><h4>自動施放設定</h4>'+ 
+        '<div class="a9868-skillline opener"><b>開怪技能</b><span>MP &gt;</span><select data-a9868-num="openMpMin">'+pctOptions(a.openMpMin,[0,20,30,40,50,60,70,80])+'</select><span>%</span><select class="wide" data-a9868-string="openSkill">'+skillOptions('atk',a.openSkill,'無')+'</select></div>'+ 
+        '<div class="a9868-skillline attack"><b>攻擊技能</b><span>MP &gt;</span><select data-a9868-num="attackMpMin">'+pctOptions(a.attackMpMin,[0,20,30,40,50,60,70,80])+'</select><span>%</span><select class="wide" data-a9868-string="attackSkill">'+skillOptions('atk',a.attackSkill,'無')+'</select></div>'+ 
+        '<div class="a9868-skillline heal"><b>治療魔法</b><span>HP &lt;</span><select data-a9868-num="healPct">'+pctOptions(a.healPct)+'</select><span>%</span><select class="wide" data-a9868-string="healSkillId">'+healOptions()+'</select></div>'+ 
+        '<label class="a9868-check compact"><input type="checkbox" data-a9868-flag="healSkill" '+(a.healSkill?'checked':'')+'> 啟用自動治療魔法</label>'+ 
+        '<div class="a9868-skillline convert"><b>轉換魔法</b><span>HP &gt;</span><select data-a9868-num="convertHpMin">'+pctOptions(a.convertHpMin,[20,30,40,50,60,70,80,90])+'</select><span>%　MP &lt;</span><select data-a9868-num="convertMpMax">'+pctOptions(a.convertMpMax,[10,20,30,40,50,60])+'</select><span>%</span><select class="wide" data-a9868-string="convertSkill">'+skillOptions('convert',a.convertSkill,'無')+'</select></div>'+ 
+        '<p class="a9868-note">開怪技能只在新的怪物目標首次接戰時施放一次；攻擊技能依 MP 門檻循環施放。技能清單只顯示目前角色已學會且符合等級／妖精屬性的技能。</p>'+ 
+      '</div>'+ 
+      '<div class="a9868-card"><h4>自動化技能（狀態）</h4><div class="a9868-buffs">'+buffRows()+'</div></div>'+ 
+      '<div class="a9868-card"><h4>輔助道具</h4><div class="a9868-items">'+
+        itemRow('potion_haste','自動加速藥水','haste')+
+        itemRow('potion_blue','藍色藥水','blue')+
+        itemRow('potion_brave','勇敢藥水','brave','knight')+
+        itemRow('new_item_139','精靈餅乾','cookie','elf')+
+        itemRow('new_item_140','慎重藥水','cautious','mage')+
+        itemRow('scroll_poly','變形卷軸','poly')+
+        ((a8Item(state.equipment?.wpn)?.isBow)?'<div class="a9868-item-row"><label><span>🏹 銀箭</span></label><label class="a9868-buy"><input type="checkbox" data-a9868-restock="wpn_22" '+(a.autoRestock?.wpn_22?'checked':'')+'> 自動購買</label><small>持有 '+fmt(a8Count('wpn_22'))+'</small></div>':'')+
+      '</div></div>'+ 
+      '<div class="a9868-footnote">紅／橙／白藥水與輔助道具的自動補貨沿用既有商店價格與低存量規則；金幣不足時不會購買。</div>'+ 
+    '</div>';
+  }
+  function basicHtml(){return typeof a55SettingsHtml==='function'?a55SettingsHtml().replace(/^<h3>設定<\/h3>/,''):''}
+  function settingsHtml(){
+    ensure68();
+    const tabs='<div class="a9868-tabs"><button data-a9868-tab="auto" class="'+(A9868_TAB==='auto'?'active':'')+'">自動設定</button><button data-a9868-tab="autosell" class="'+(A9868_TAB==='autosell'?'active':'')+'">掛機自動賣出</button><button data-a9868-tab="basic" class="'+(A9868_TAB==='basic'?'active':'')+'">基本設定</button></div>';
+    let body=autoHtml();
+    if(A9868_TAB==='autosell')body='<div class="a9868-card"><h4>掛機自動賣出</h4><p class="a9868-note">沿用既有白名單自動販賣功能；強化／詞綴裝備與補給品仍受保護。</p><button class="setting-btn" data-a9868-open-autosell>開啟掛機自動賣出設定</button></div>';
+    if(A9868_TAB==='basic')body=basicHtml();
+    return '<h3>設定</h3>'+tabs+'<div class="a9868-body">'+body+'</div>';
+  }
+
+  const _drawerHtml68=drawerHtml;
+  drawerHtml=function(which){if(which==='settings'&&state)return settingsHtml();return _drawerHtml68(which)};
+  const _bind68=bindDrawer;
+  bindDrawer=function(root){
+    _bind68(root);
+    root.querySelectorAll('[data-a9868-tab]').forEach(b=>b.onclick=()=>{A9868_TAB=b.dataset.a9868Tab;try{renderDrawers()}catch(e){}});
+    root.querySelectorAll('[data-a9868-flag]').forEach(c=>c.onchange=()=>{ensure68();state.autoCombat[c.dataset.a9868Flag]=!!c.checked;save()});
+    root.querySelectorAll('[data-a9868-restock]').forEach(c=>c.onchange=()=>{ensure68();state.autoCombat.autoRestock[c.dataset.a9868Restock]=!!c.checked;save()});
+    root.querySelectorAll('[data-a9868-buff]').forEach(c=>c.onchange=()=>{ensure68();state.autoCombat.autoBuffSkills[c.dataset.a9868Buff]=!!c.checked;save()});
+    root.querySelectorAll('[data-a9868-string]').forEach(e=>e.onchange=()=>{ensure68();state.autoCombat[e.dataset.a9868String]=e.value;if(e.dataset.a9868String==='attackSkill')state.autoCombat.attackSkill=e.value;save();if(e.dataset.a9868String==='healPotion')try{renderDrawers()}catch(_e){}});
+    root.querySelectorAll('[data-a9868-num]').forEach(e=>e.onchange=()=>{ensure68();const k=e.dataset.a9868Num,v=Math.max(0,Math.min(100,Number(e.value)||0));state.autoCombat[k]=v;if(k==='attackMpMin')state.autoCombat.mpReserve=v;save()});
+    const as=root.querySelector('[data-a9868-open-autosell]');if(as)as.onclick=()=>{if(typeof a972AutoSellPopup==='function')a972AutoSellPopup()};
+  };
+
+  function buffAuto(){
+    ensure68();const a=state.autoCombat;
+    for(const [id,sk] of ownedRows('buff')){
+      if(!a.autoBuffSkills[id])continue;
+      if(a11SkillBuffActive(id))continue;
+      if(state.player.mp<Number(sk.mp||0))continue;
+      if(Number(sk.hpCost||0)>0&&state.player.hp<=Number(sk.hpCost||0))continue;
+      if(a11Cast(id,true))return true;
+    }
+    return false;
+  }
+  function openingAuto(mpPct){
+    const a=state.autoCombat,id=a.openSkill,sk=DATA.skills?.[id];if(!id||!sk||mpPct<=a.openMpMin)return false;
+    const t=state.mobs?.[state.target];if(!t||t.dead||A9868_OPENED.has(t))return false;
+    if(state.player.mp<Number(sk.mp||0))return false;
+    if(a11Cast(id,true)){A9868_OPENED.add(t);return true}return false;
+  }
+  function convertAuto(hpPct,mpPct){
+    const a=state.autoCombat,id=a.convertSkill,sk=DATA.skills?.[id];if(!id||!sk)return false;
+    if(!(hpPct>a.convertHpMin&&mpPct<a.convertMpMax))return false;
+    if(Number(sk.hpCost||0)>0&&state.player.hp<=Number(sk.hpCost||0))return false;
+    if(state.player.mp<Number(sk.mp||0)||!a11SkillReady(id))return false;
+    return !!a11Cast(id,true);
+  }
+
+  // 以 Alpha97 完整 auto 為基礎，先處理新功能，再交還原本治療/道具/攻擊流程。
+  const _auto68=a11Auto;
+  a11Auto=function(now){
+    if(!state?.running||a7IsVillage()||now<a11AutoAt)return;
+    ensure68();
+    const hpPct=100*state.player.hp/Math.max(1,state.player.maxHp),mpPct=100*state.player.mp/Math.max(1,state.player.maxMp);
+    // 先讓舊流程在同一節拍可執行，因此暫時倒回排程門檻。
+    if(buffAuto()){a11AutoAt=now+550;return}
+    if(convertAuto(hpPct,mpPct)){a11AutoAt=now+550;return}
+    if(openingAuto(mpPct)){a11AutoAt=now+550;return}
+    // 舊 Alpha97 a11Auto 會自行設定 a11AutoAt，因此先清成可執行。
+    a11AutoAt=0;_auto68(now);
+  };
+
+  function applyVersion(){
+    document.title=A41_BRAND+' · '+A9868_BUILD;
+    const v=document.querySelector('#a46-login-screen .a46-version');if(v)v.textContent=A9868_BUILD;
+    const sub=document.querySelector('#create-screen .create-sub');if(sub)sub.textContent='全面重製核心 Alpha98.68｜共同版自動喝水／道具／魔法設定｜PC＋手機';
+    try{a55InstallLoginVersionPanel()}catch(e){}
+    const info=document.querySelector('#a55-login-info .a55-login-info-body');if(info)info.innerHTML='<b>'+A9868_BUILD+'</b><p>更新事項：恢復並整合自動喝水、自動補貨、輔助道具與自動魔法設定；新增開怪技能、Buff 技能自動維持、轉換魔法條件。</p><p>所有職業使用同一套共同介面，技能下拉清單依目前角色已學技能、等級與妖精屬性自動過濾。</p><small>本版未新增媒體素材；更新 GitHub Pages 只需替換 index.html。</small>';
+  }
+  function audit(){
+    const issues=[];if(!state)return{ok:false,issues:['無角色狀態'],build:A9868_BUILD};ensure68();const h=settingsHtml();
+    for(const t of ['自動設定','開怪技能','攻擊技能','治療魔法','轉換魔法','輔助道具'])if(!h.includes(t))issues.push('缺少 '+t);
+    if(!state.autoCombat.autoBuffSkills||typeof state.autoCombat.autoBuffSkills!=='object')issues.push('autoBuffSkills 未建立');
+    if(!Array.isArray(ownedRows('atk')))issues.push('攻擊技能清單異常');
+    return{ok:issues.length===0,issues,build:A9868_BUILD,class:state.player.cls,attackSkills:ownedRows('atk').length,healSkills:ownedRows('heal').length,buffSkills:ownedRows('buff').length,convertSkills:ownedRows('convert').length};
+  }
+  async function fullRegression(){let base,own;try{base=window.__A9867_TEST__?.fullRegression?await window.__A9867_TEST__.fullRegression():{ok:true};own=audit();return{ok:!!base.ok&&own.ok,build:A9868_BUILD,base,current:own}}finally{try{applyVersion()}catch(e){}}}
+  window.__A9868_TEST__={build:A9868_BUILD,audit,fullRegression,settingsHtml,ownedRows,ensure:ensure68};
+  applyVersion();
+})();
+
+
+// =====================================================================
+// B1.0 Alpha98.69 — 四角色同時掛網恢復 / 移除單一 offline owner 衝突
+// - 每個角色槽各自保存 background.hiddenAt / mapId / 掛機狀態。
+// - 切換角色時，正在獵場自動狩獵的角色繼續以離線 replay 掛網；
+//   其他角色不會再因為新角色開始掛網而被強制停止。
+// - 24 小時單次上限與 100ms replay 公式維持不變。
+// =====================================================================
+(()=>{
+  const A9869_BUILD='B1.0 Alpha98.69';
+  const OWNER_CONFLICT_RE=/(another-character-started-offline|owner-conflict|handoff)/i;
+
+  function a9869IsOwnerConflict(s){
+    return OWNER_CONFLICT_RE.test(String(s?.a46?.offlineForcedStopReason||''));
+  }
+  function a9869ClearLegacyOwner(){
+    try{a46SetOfflineOwner(0)}catch(e){try{localStorage.removeItem(A46_OFFLINE_OWNER_KEY)}catch(_e){}}
+    return 0;
+  }
+  function a9869StampPolicy(s,slot=0){
+    if(!s||typeof s!=='object')return s;
+    s.a46=(s.a46&&typeof s.a46==='object'&&!Array.isArray(s.a46))?s.a46:{};
+    s.a46.offlineOwnerPolicy='per-character-independent';
+    s.a46.multiOfflineEnabled=true;
+    s.a46.multiOfflineVersion=69;
+    if(slot)s.a46.characterSlot=Number(slot)||s.a46.characterSlot||0;
+    s.saveMeta=(s.saveMeta&&typeof s.saveMeta==='object'&&!Array.isArray(s.saveMeta))?s.saveMeta:{};
+    s.saveMeta.offlinePolicy='per-character-independent+100ms-replay+24h-cap';
+    s.saveMeta.multiOffline=true;
+    return s;
+  }
+  function a9869MigrateSlot(slot,now=Date.now()){
+    slot=Math.max(1,Math.min(A46_SLOT_COUNT,Number(slot)||1));
+    const s=a46ReadSlot(slot);if(!s)return false;
+    let changed=false;
+    a9869StampPolicy(s,slot);
+    if(a9869IsOwnerConflict(s)){
+      s.a46.offlineForcedStopAt=0;s.a46.offlineForcedStopReason='';changed=true;
+      // 舊版曾因「另一角色開始掛網」把這名角色截停；升級後從現在重新開始，
+      // 不倒算舊版已被截停的時間，避免補發不合理收益。
+      if(s.a36?.background?.active&&!s.dead){
+        s.a36.background.hiddenAt=Number(now)||Date.now();
+        s.a36.background.lastReason='alpha98.69-multi-offline-migration';
+        s.a36.background.wasRunning=true;
+      }
+    }
+    if(s.a978?.inLobby&&s.a36?.background?.active){s.a978.inLobby=false;changed=true}
+    if(changed||String(s?.a46?.offlineOwnerPolicy||'')!=='per-character-independent')changed=true;
+    return a46WriteSlot(slot,s)&&changed;
+  }
+  function a9869MigrateAllSlots(now=Date.now()){
+    a9869ClearLegacyOwner();let changed=0;
+    for(let i=1;i<=A46_SLOT_COUNT;i++)if(a9869MigrateSlot(i,now))changed++;
+    if(state){
+      a9869StampPolicy(state,a46ActiveSlot||Number(state?.a46?.characterSlot||0)||0);
+      if(a9869IsOwnerConflict(state)){
+        state.a46.offlineForcedStopAt=0;state.a46.offlineForcedStopReason='';
+        if(state.a36?.background?.active&&!state.dead){state.a36.background.hiddenAt=Number(now)||Date.now();state.a36.background.lastReason='alpha98.69-multi-offline-migration';state.a36.background.wasRunning=true}
+      }
+    }
+    return changed;
+  }
+
+  // a46EnsureState 每次 render/save 仍會寫入舊 single-owner metadata；最後一層覆蓋成現行規則。
+  const _a9869EnsureBase=a46EnsureState;
+  a46EnsureState=function(){
+    const r=_a9869EnsureBase();if(state)a9869StampPolicy(state,a46ActiveSlot||Number(state?.a46?.characterSlot||0)||0);return r;
+  };
+
+  // 移除 account-level owner：取得掛網權不再截停其他角色。
+  a46ClaimOfflineOwner=function(slot,now=Date.now()){
+    slot=Math.max(1,Math.min(A46_SLOT_COUNT,Number(slot)||1));a9869ClearLegacyOwner();
+    if(state){a9869StampPolicy(state,slot);if(a9869IsOwnerConflict(state)){state.a46.offlineForcedStopAt=0;state.a46.offlineForcedStopReason=''}}
+    return slot;
+  };
+  a46ReleaseOfflineOwner=function(){return a9869ClearLegacyOwner()};
+  a47RepairOfflineOwner=function(){return a9869ClearLegacyOwner()};
+
+  // Recovery / backup 還原時只處理本角色自己的 24h / dead 狀態，不再做 owner 衝突截停。
+  a9832ReconcileOfflineAfterRestore=function(slot,source='restore',now=Date.now()){
+    slot=Number(slot)||0;if(!state||slot<1||slot>A46_SLOT_COUNT)return{ok:false,changed:false,reason:'no-state-or-slot'};
+    a46ActiveSlot=slot;a9831EnsureCurrentSchema();a9869ClearLegacyOwner();a9869StampPolicy(state,slot);
+    state.a46=(state.a46&&typeof state.a46==='object'&&!Array.isArray(state.a46))?state.a46:{};
+    let changed=false,action='none';
+    if(a9869IsOwnerConflict(state)){state.a46.offlineForcedStopAt=0;state.a46.offlineForcedStopReason='';changed=true;action='clear-legacy-owner-conflict'}
+    const bg=state.a36?.background,hiddenAt=Number(bg?.hiddenAt||0),capAt=hiddenAt>0?hiddenAt+A46_OFFLINE_CAP_MS:0;
+    if(bg?.active&&state.dead){action='dead-wait-settlement'}
+    else if(bg?.active&&capAt>0&&Number(now)>=capAt){action='capped-wait-settlement'}
+    try{a88StampSlot(state,slot)}catch(e){}state.schema=A63_SCHEMA;
+    if(changed){try{save()}catch(e){};try{a30Checkpoint('a9869-reconcile:'+String(source),true)}catch(e){}}
+    return{ok:true,changed,action,ownerBefore:0,ownerAfter:0,hiddenAt,stopAt:Number(state.a46?.offlineForcedStopAt||0),schema:state.schema};
+  };
+
+  // Alpha97.8 會把「返回選角」改成大廳回復並關閉 background。
+  // 現在只有「沒有在獵場掛機」的角色才進大廳；已開始狩獵者維持獨立掛網。
+  const _a9869MarkLobbyBase=a978MarkLobby;
+  a978MarkLobby=function(slot,now=Date.now()){
+    slot=Math.max(1,Math.min(A46_SLOT_COUNT,Number(slot)||1));const s=a46ReadSlot(slot);
+    if(s?.a36?.background?.active&&!s.dead&&Number(s?.a46?.offlineForcedStopAt||0)===0){
+      s.running=false;s.a978=(s.a978&&typeof s.a978==='object'&&!Array.isArray(s.a978))?s.a978:{};
+      s.a978.inLobby=false;s.a978.lobbyEnteredAt=0;a9869StampPolicy(s,slot);a9869ClearLegacyOwner();
+      return a46WriteSlot(slot,s);
+    }
+    return _a9869MarkLobbyBase(slot,now);
+  };
+
+  // 角色卡片：不再依 owner 判斷「掛機中」，只看該角色自己的 background。
+  a47OfflineStatus=function(s,slot){
+    const bg=s?.a36?.background;if(!bg?.active)return '';
+    const hiddenAt=Number(bg.hiddenAt||Date.now()),forced=Number(s?.a46?.offlineForcedStopAt||0),capAt=hiddenAt+A46_OFFLINE_CAP_MS;
+    const end=Math.min(Date.now(),forced>0?forced:Infinity,capAt),ms=Math.max(0,end-hiddenAt);
+    if(forced>0&&!a9869IsOwnerConflict(s))return '離線掛機已停止 · '+a36ElapsedText(ms)+' · 等待登入結算';
+    if(Date.now()>=capAt)return '已達 24 小時上限 · 等待登入結算';
+    return '獨立掛機中 · '+a36ElapsedText(ms)+' / 24小時';
+  };
+
+  function a9869ApplyUiText(){
+    const v=document.querySelector('#a46-login-screen .a46-version');if(v)v.textContent=A9869_BUILD;
+    const note=document.querySelector('#a46-login-screen .a46-login-note');if(note)note.textContent='4 個角色槽可各自獨立掛網；切換角色不會停止其他角色。每名角色單次離線收益最多 24 小時。';
+    const tip=document.querySelector('.a46-slot-tip');if(tip)tip.textContent='4 個角色槽彼此獨立。正在獵場自動狩獵的角色切換後會繼續掛網；每名角色單次最多計算 24 小時。';
+    const sub=document.querySelector('#create-screen .create-sub');if(sub)sub.textContent='全面重製核心 Alpha98.69｜四角色獨立同時掛網｜共同版自動設定｜PC＋手機';
+    try{a55InstallLoginVersionPanel()}catch(e){}
+    const info=document.querySelector('#a55-login-info .a55-login-info-body');if(info)info.innerHTML='<b>'+A9869_BUILD+'</b><p>恢復四角色槽獨立同時掛網：切換到其他角色時，不再用單一 offline owner 截停前一名角色。</p><p>每個角色各自保存掛機地圖、開始時間與離線結算；24 小時上限與既有 100ms replay 收益公式不變。</p><small>本版未新增媒體素材；GitHub Pages 只需替換 index.html。</small>';
+    document.title=A41_BRAND+' · '+A9869_BUILD;
+  }
+
+  const _a9869RenderSlotsBase=a46RenderSlots;
+  a46RenderSlots=function(){const r=_a9869RenderSlotsBase();a9869ApplyUiText();return r};
+  const _a9869RenderBase=render;
+  render=function(){const r=_a9869RenderBase();if(state)a9869StampPolicy(state,a46ActiveSlot||Number(state?.a46?.characterSlot||0)||0);a9869ApplyUiText();return r};
+  const _a9869InitBase=init;
+  init=function(){a9869MigrateAllSlots(Date.now());const r=_a9869InitBase();setTimeout(()=>{try{a9869MigrateAllSlots(Date.now());a9869ApplyUiText()}catch(e){}},0);return r};
+
+  function a9869SlotSnapshot(){
+    const rows=[];for(let i=1;i<=A46_SLOT_COUNT;i++){const s=a46ReadSlot(i);rows.push({slot:i,name:s?.player?.name||'',active:!!s?.a36?.background?.active,hiddenAt:Number(s?.a36?.background?.hiddenAt||0),forced:Number(s?.a46?.offlineForcedStopAt||0),reason:String(s?.a46?.offlineForcedStopReason||''),lobby:!!s?.a978?.inLobby,mapId:String(s?.mapId||'')})}return rows;
+  }
+  function a9869Audit(){
+    const issues=[];a9869ClearLegacyOwner();if(A46_SLOT_COUNT!==4)issues.push('角色槽不是4');if(A46_OFFLINE_CAP_MS!==86400000)issues.push('24小時上限遺失');
+    if(typeof a36PauseForBackground!=='function'||typeof a36ResumeFromBackground!=='function')issues.push('離線 replay API 遺失');
+    if(a46OfflineOwner()!==0)issues.push('舊 offline owner 尚未清除');
+    if(state&&state?.a46?.offlineOwnerPolicy!=='per-character-independent')issues.push('目前角色仍是 single owner policy');
+    return{ok:issues.length===0,issues,build:A9869_BUILD,slots:A46_SLOT_COUNT,capMs:A46_OFFLINE_CAP_MS,owner:a46OfflineOwner(),rows:a9869SlotSnapshot()};
+  }
+  async function a9869MultiSlotProbe(){
+    const storage=a76StorageSnapshot(),snap=state?a74Clone(state):null,active=a46ActiveSlot,pending=a46PendingSlot,rows=[],add=(name,ok,detail={})=>rows.push({name,ok:!!ok,detail});
+    try{
+      localStorage.clear();localStorage.setItem(A46_MIGRATED_KEY,'1');a9869ClearLegacyOwner();
+      const base=1700000000000,names=[];
+      for(let slot=1;slot<=4;slot++){
+        a76TestReset(slot===2?'elf':slot===3?'mage':slot===4?'dark':'knight',slot);state.player.name='A9869-'+slot;state.player.maxHp=1e9;state.player.hp=1e9;state.player.maxMp=1e9;state.player.mp=1e9;state.mapId='training';state.inVillage=false;state.dead=false;state.running=true;ensureMobs();save();
+        const t=base+slot*1000;a36PauseForBackground('a9869-slot-'+slot,t);save();names.push(state.player.name);
+      }
+      const s1=a9869SlotSnapshot();
+      add('四角色可同時保持掛網',s1.every(x=>x.active&&x.forced===0&&!x.lobby),{rows:s1,owner:a46OfflineOwner()});
+      add('單一 offline owner 已停用',a46OfflineOwner()===0,{owner:a46OfflineOwner()});
+      add('角色資料彼此獨立',s1.map(x=>x.name).join('|')===names.join('|'),{names:s1.map(x=>x.name)});
+      // 模擬選角頁 markLobby：掛網角色不應被轉成大廳。
+      const keep=a978MarkLobby(1,base+10000),afterLobby=a46ReadSlot(1);
+      add('切角色不會把掛網角色轉成大廳',keep!==false&&afterLobby?.a36?.background?.active===true&&afterLobby?.a978?.inLobby!==true&&Number(afterLobby?.a46?.offlineForcedStopAt||0)===0,{bg:afterLobby?.a36?.background,lobby:afterLobby?.a978?.inLobby});
+      // 結算其中一隻，不得影響其他三隻的 background 狀態。
+      a46ActiveSlot=1;state=a46Clone(a46ReadSlot(1));a46EnsureState();state.running=false;
+      const r=a36ResumeFromBackground('a9869-probe',base+6100,false);await new Promise(res=>setTimeout(res,30));try{save()}catch(e){}
+      const s2=a9869SlotSnapshot();
+      add('單獨結算不會停止其他角色',s2.slice(1).every(x=>x.active&&x.forced===0),{resume:r,rows:s2});
+      add('已結算角色自身停止背景掛網',s2[0].active===false,{slot1:s2[0]});
+    }catch(e){add('Alpha98.69 multi-slot probe',false,{error:String(e?.stack||e)})}
+    finally{
+      try{a76StorageRestore(storage);a46ActiveSlot=active;a46PendingSlot=pending;a9869ClearLegacyOwner();if(snap){state=snap;a9869StampPolicy(state,active);derive();render()}else{state=null;try{a46ShowLogin()}catch(e){}}}catch(e){add('測試後狀態還原',false,{error:String(e?.stack||e)})}
+    }
+    return{ok:rows.every(x=>x.ok),build:A9869_BUILD,total:rows.length,passed:rows.filter(x=>x.ok).length,failed:rows.filter(x=>!x.ok).length,rows};
+  }
+  async function a9869SwitchE2E(){
+    const storage=a76StorageSnapshot(),snap=state?a74Clone(state):null,active=a46ActiveSlot,pending=a46PendingSlot,rows=[],add=(name,ok,detail={})=>rows.push({name,ok:!!ok,detail});
+    try{
+      localStorage.clear();localStorage.setItem(A46_MIGRATED_KEY,'1');a9869ClearLegacyOwner();
+      // 先準備 slot2，再由 slot1 實際走「狩獵 → 選角 → slot2 → 狩獵 → 選角」。
+      a76TestReset('elf',2);state.player.name='A9869-S2';state.mapId='training';state.inVillage=false;state.dead=false;state.running=false;save();
+      a76TestReset('knight',1);state.player.name='A9869-S1';state.mapId='training';state.inVillage=false;state.dead=false;state.running=true;state.player.maxHp=1e9;state.player.hp=1e9;ensureMobs();save();
+      a46ShowSlots();await new Promise(r=>setTimeout(r,40));
+      let s1=a46ReadSlot(1);add('slot1 返回選角後繼續掛網',a46ActiveSlot===0&&state===null&&s1?.a36?.background?.active===true&&s1?.a978?.inLobby!==true&&Number(s1?.a46?.offlineForcedStopAt||0)===0,{active:a46ActiveSlot,stateNull:state===null,bg:s1?.a36?.background,lobby:s1?.a978?.inLobby});
+      const e2=a46EnterSlot(2);await new Promise(r=>setTimeout(r,80));
+      add('可切入slot2',e2===true&&state?.player?.name==='A9869-S2',{enter:e2,name:state?.player?.name||''});
+      if(state){state.mapId='training';state.inVillage=false;state.dead=false;state.running=true;state.player.maxHp=1e9;state.player.hp=1e9;ensureMobs();save()}
+      a46ShowSlots();await new Promise(r=>setTimeout(r,40));
+      s1=a46ReadSlot(1);const s2=a46ReadSlot(2);add('slot1與slot2同時掛網',!!s1?.a36?.background?.active&&!!s2?.a36?.background?.active&&Number(s1?.a46?.offlineForcedStopAt||0)===0&&Number(s2?.a46?.offlineForcedStopAt||0)===0&&a46OfflineOwner()===0,{s1:!!s1?.a36?.background?.active,s2:!!s2?.a36?.background?.active,owner:a46OfflineOwner()});
+      const e1=a46EnterSlot(1);await new Promise(r=>setTimeout(r,180));
+      const s2After=a46ReadSlot(2);add('回slot1結算不會停止slot2',e1===true&&state?.player?.name==='A9869-S1'&&s2After?.a36?.background?.active===true&&Number(s2After?.a46?.offlineForcedStopAt||0)===0,{enter:e1,name:state?.player?.name||'',slot2Active:!!s2After?.a36?.background?.active,slot2Forced:s2After?.a46?.offlineForcedStopAt||0});
+    }catch(e){add('Alpha98.69 switch E2E',false,{error:String(e?.stack||e)})}
+    finally{
+      try{a76StorageRestore(storage);a46ActiveSlot=active;a46PendingSlot=pending;a9869ClearLegacyOwner();if(snap){state=snap;a9869StampPolicy(state,active);derive();render()}else{state=null;try{a46ShowLogin()}catch(e){}}}catch(e){add('E2E後狀態還原',false,{error:String(e?.stack||e)})}
+    }
+    return{ok:rows.every(x=>x.ok),build:A9869_BUILD,total:rows.length,passed:rows.filter(x=>x.ok).length,failed:rows.filter(x=>!x.ok).length,rows};
+  }
+  async function a9869FullRegression(){
+    const own=a9869Audit(),multi=await a9869MultiSlotProbe(),e2e=await a9869SwitchE2E();
+    let auto={ok:true,skipped:true};
+    try{
+      const ss=a76StorageSnapshot(),sp=state?a74Clone(state):null,ac=a46ActiveSlot,pd=a46PendingSlot;
+      a76TestReset('elf',1);state.player.name='A9869-AUTO';state.mapId='training';state.inVillage=false;state.running=false;save();
+      auto=window.__A9868_TEST__?.audit?window.__A9868_TEST__.audit():{ok:true,skipped:true};
+      a76StorageRestore(ss);a46ActiveSlot=ac;a46PendingSlot=pd;if(sp){state=sp;derive();render()}else state=null;
+    }catch(e){auto={ok:false,issues:[String(e)]}}
+    a9869ApplyUiText();return{ok:own.ok&&multi.ok&&e2e.ok&&auto.ok,build:A9869_BUILD,current:own,multi,e2e,auto};
+  }
+
+  a9869MigrateAllSlots(Date.now());a9869ApplyUiText();
+  window.__A9869_TEST__={build:A9869_BUILD,audit:a9869Audit,multi:a9869MultiSlotProbe,e2e:a9869SwitchE2E,fullRegression:a9869FullRegression,slots:a9869SlotSnapshot,migrate:a9869MigrateAllSlots};
+})();
+
+
 
 
 })();
